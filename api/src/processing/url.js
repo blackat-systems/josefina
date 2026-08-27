@@ -3,6 +3,7 @@ import { strict as assert } from "node:assert";
 
 import { env } from "../config.js";
 import { services } from "./service-config.js";
+import { isJosefinaService } from "./service-scope.js";
 import { getRedirectingURL } from "../misc/utils.js";
 import { friendlyServiceName } from "./service-alias.js";
 
@@ -73,7 +74,10 @@ function aliasURL(url) {
 
         case "facebook":
         case "fb":
-            if (url.searchParams.get('v')) {
+            if (
+                (getHostIfValid(url) === "facebook" || url.hostname === "fb.watch")
+                && url.searchParams.get('v')
+            ) {
                 url = new URL(`https://web.facebook.com/user/videos/${url.searchParams.get('v')}`);
             }
             if (url.hostname === 'fb.watch') {
@@ -92,7 +96,7 @@ function aliasURL(url) {
             if (services.vk.altDomains.includes(url.hostname)) {
                 url.hostname = 'vk.com';
             }
-            if (url.searchParams.get('z')) {
+            if (getHostIfValid(url) === "vk" && url.searchParams.get('z')) {
                 url = new URL(`https://vk.com/${url.searchParams.get('z')}`);
             }
             break;
@@ -129,7 +133,9 @@ function cleanURL(url) {
 
     switch (host) {
         case "pinterest":
-            url.hostname = 'pinterest.com';
+            if (getHostIfValid(url) === "pinterest") {
+                url.hostname = 'pinterest.com';
+            }
             break;
         case "vk":
             if (url.pathname.includes('/clip') && url.searchParams.get('z')) {
@@ -200,12 +206,7 @@ export function extract(url, enabledServices = env.enabledServices) {
         return { error: "link.invalid" };
     }
 
-    if (!enabledServices.has(host)) {
-        // show a different message when youtube is disabled on official instances
-        // as it only happens when shit hits the fan
-        if (new URL(env.apiURL).hostname.endsWith(".imput.net") && host === "youtube") {
-            return { error: "youtube.disabled_main_instance" };
-        }
+    if (!isJosefinaService(host) || !enabledServices.has(host)) {
         return { error: "service.disabled" };
     }
 

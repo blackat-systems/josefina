@@ -11,7 +11,7 @@ this document is not final and will expand over time. feel free to improve it!
 | PROCESSING_PRIORITY    |         | `10`                                  |
 | API_INSTANCE_COUNT     |         | `6`                                   |
 | API_REDIS_URL          |         | `redis://localhost:6379`              |
-| DISABLED_SERVICES      |         | `bilibili,youtube`                    |
+| DISABLED_SERVICES      |         | `youtube,facebook`                    |
 | FORCE_LOCAL_PROCESSING | `never` | `always`                              |
 | API_ENV_FILE           |         | `/.env`                               |
 
@@ -109,9 +109,9 @@ when configured, cobalt will use this redis instance for tunnel cache. required 
 the value is a URL.
 
 ### DISABLED_SERVICES
-comma-separated list which disables certain services from being used.
+comma-separated list which disables public Josefina services from being used. whitespace, empty entries, and duplicates are normalized. values outside `instagram`, `tiktok`, `youtube`, and `facebook` have no effect and cannot expand the public scope.
 
-the value is a string of cobalt-supported services.
+the value is a string containing a subset of Josefina's four canonical service IDs. API keys preserve their existing ability to select services globally disabled by this variable, but only within the same four-service ceiling; see [Josefina platform contract v1](/docs/JOSEFINA_PLATFORM_CONTRACT_V1.md).
 
 ### FORCE_LOCAL_PROCESSING
 the value is a string: `never` (default), `session`, or `always`:

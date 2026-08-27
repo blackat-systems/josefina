@@ -4,6 +4,9 @@ methods, acceptable values, headers, responses and everything else related to ma
 > [!IMPORTANT]
 > hosted api instances (such as `api.cobalt.tools`) use bot protection and are **not** intended to be used in other projects without explicit permission. if you want to use the cobalt api, you should [host your own instance](/docs/run-an-instance.md) or ask an instance owner for access.
 
+> [!NOTE]
+> Josefina publicly exposes only `instagram`, `tiktok`, `youtube`, and `facebook`, in that stable order. This ceiling is enforced by configuration, API-key validation, and backend routing; see [Josefina platform contract v1](/docs/JOSEFINA_PLATFORM_CONTRACT_V1.md). The `cobalt` response namespace remains temporarily for frontend compatibility.
+
 - [POST /](#post)
 - [POST /session](#post-session)
 - [GET /](#get)
@@ -49,6 +52,8 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ## POST `/`
 cobalt's main processing endpoint.
+
+In Josefina, URLs for registered legacy services outside the four-service public scope return `error.api.service.disabled` before their extractor is contacted.
 
 > [!IMPORTANT]
 > you must include correct `Accept` and `Content-Type` headers with every `POST /` request.
@@ -220,7 +225,7 @@ body type: `application/json`
 | `url`              | `string`   | instance url                                   |
 | `startTime`        | `string`   | instance start time in unix milliseconds       |
 | `turnstileSitekey` | `string`   | site key for a turnstile widget (optional)     |
-| `services`         | `string[]` | array of services which this instance supports |
+| `services`         | `string[]` | enabled Josefina services, as an ordered subset of `instagram`, `tiktok`, `youtube`, `facebook` |
 
 #### git object
 | key         | type     | description |

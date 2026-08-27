@@ -1,5 +1,8 @@
 import { Constants } from "youtubei.js";
-import { services } from "../processing/service-config.js";
+import {
+    createJosefinaServiceSet,
+    josefinaServiceIds,
+} from "../processing/service-scope.js";
 import { updateEnv, canonicalEnv, env as currentEnv } from "../config.js";
 
 import { FileWatcher } from "../misc/file-watcher.js";
@@ -39,13 +42,16 @@ const subscribe = (keys, fn) => {
 }
 
 export const loadEnvs = (env = process.env) => {
-    const allServices = new Set(Object.keys(services));
-    const disabledServices = env.DISABLED_SERVICES?.split(',') || [];
-    const enabledServices = new Set(Object.keys(services).filter(e => {
-        if (!disabledServices.includes(e)) {
-            return e;
-        }
-    }));
+    const allServices = createJosefinaServiceSet();
+    const disabledServices = new Set(
+        (env.DISABLED_SERVICES ?? '')
+            .split(',')
+            .map(service => service.trim())
+            .filter(Boolean)
+    );
+    const enabledServices = new Set(
+        josefinaServiceIds.filter(service => !disabledServices.has(service))
+    );
 
     // we need to copy the proxy envs (HTTP_PROXY, HTTPS_PROXY)
     // back into process.env, so that EnvHttpProxyAgent can pick
