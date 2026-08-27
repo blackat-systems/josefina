@@ -40,10 +40,7 @@ const embedHeaders = {
     "User-Agent": genericUserAgent,
 }
 
-const cachedDtsg = {
-    value: '',
-    expiry: 0
-}
+const cachedDtsg = new WeakMap();
 
 const getNumberFromQuery = (name, data) => {
     const s = data?.match(new RegExp(name + '=(\\d+)'))?.[1];
@@ -60,7 +57,8 @@ export default function instagram(obj) {
 
     async function findDtsgId(cookie) {
         try {
-            if (cachedDtsg.expiry > Date.now()) return cachedDtsg.value;
+            const cached = cachedDtsg.get(cookie);
+            if (cached?.expiry > Date.now()) return cached.value;
 
             const data = await fetch('https://www.instagram.com/', {
                 headers: {
@@ -72,10 +70,13 @@ export default function instagram(obj) {
 
             const token = data.match(/"dtsg":{"token":"(.*?)"/)[1];
 
-            cachedDtsg.value = token;
-            cachedDtsg.expiry = Date.now() + 86390000;
-
-            if (token) return token;
+            if (token) {
+                cachedDtsg.set(cookie, {
+                    value: token,
+                    expiry: Date.now() + 86390000
+                });
+                return token;
+            }
             return false;
         }
         catch {}
@@ -144,11 +145,23 @@ export default function instagram(obj) {
             dispatcher
         }).then(r => r.text()).catch(() => {});
 
-        let embedData = JSON.parse(data?.match(/"init",\[\],\[(.*?)\]\],/)[1]);
+        const serialized = data?.match(/"init",\[\],\[(.*?)\]\],/)?.[1];
+        if (!serialized) return false;
+
+        let embedData;
+        try {
+            embedData = JSON.parse(serialized);
+        } catch {
+            return false;
+        }
 
         if (!embedData || !embedData?.contextJSON) return false;
 
-        embedData = JSON.parse(embedData.contextJSON);
+        try {
+            embedData = JSON.parse(embedData.contextJSON);
+        } catch {
+            return false;
+        }
 
         return embedData;
     }
@@ -221,7 +234,7 @@ export default function instagram(obj) {
             headers: {
                 ...embedHeaders,
                 ...headers,
-                cookie,
+                ...(cookie && { cookie }),
                 'content-type': 'application/x-www-form-urlencoded',
                 'X-FB-Friendly-Name': 'PolarisPostActionLoadPostQueryQuery',
             },
@@ -298,21 +311,82 @@ export default function instagram(obj) {
         return { error: "fetch.empty" };
     }
 
+    const firstImageURL = data => {
+        const candidates = data?.image_versions2?.candidates;
+        if (!Array.isArray(candidates)) return;
+
+        return candidates.find(candidate => (
+            typeof candidate?.url === "string" && candidate.url.length
+        ))?.url;
+    };
+
+    const largestVideo = versions => {
+        if (!Array.isArray(versions)) return;
+
+        return versions
+            .filter(video => typeof video?.url === "string" && video.url.length)
+            .reduce((largest, video) => {
+                if (!largest) return video;
+                const largestArea = Number(largest.width) * Number(largest.height) || 0;
+                const videoArea = Number(video.width) * Number(video.height) || 0;
+                return largestArea < videoArea ? video : largest;
+            }, undefined);
+    }
+
+    const hasMedia = media => {
+        if (!media || typeof media !== "object") return false;
+
+        const sidecarEdges = media?.edge_sidecar_to_children?.edges;
+        if (Array.isArray(sidecarEdges)) {
+            return sidecarEdges.length > 0 && sidecarEdges.every(({ node } = {}) => (
+                typeof node?.display_url === "string" && node.display_url.length
+            ));
+        }
+
+        const hasOldVideo = typeof media.video_url === "string" && media.video_url.length;
+        const hasOldImage = typeof media.display_url === "string" && media.display_url.length;
+        if (hasOldVideo || hasOldImage) {
+            return true;
+        }
+
+        if (Array.isArray(media.carousel_media)) {
+            return media.carousel_media.length > 0 && media.carousel_media.every(item => {
+                if (!firstImageURL(item)) return false;
+                return item?.video_versions ? !!largestVideo(item.video_versions) : true;
+            });
+        }
+
+        if (media.video_versions) return !!largestVideo(media.video_versions);
+        return !!firstImageURL(media);
+    }
+
+    const hasData = data => {
+        if (!data || typeof data !== "object") return false;
+        if (Object.hasOwn(data, "gql_data")) {
+            return hasMedia(
+                data?.gql_data?.shortcode_media
+                || data?.gql_data?.xdt_shortcode_media
+            );
+        }
+        return hasMedia(data);
+    }
+
     function extractOldPost(data, id, alwaysProxy) {
         const shortcodeMedia = data?.gql_data?.shortcode_media || data?.gql_data?.xdt_shortcode_media;
         const sidecar = shortcodeMedia?.edge_sidecar_to_children;
 
-        if (sidecar) {
-            const picker = sidecar.edges.filter(e => e.node?.display_url)
+        if (Array.isArray(sidecar?.edges)) {
+            const picker = sidecar.edges
                 .map((e, i) => {
-                    const type = e.node?.is_video && e.node?.video_url ? "video" : "photo";
-
-                    let url;
-                    if (type === "video") {
-                        url = e.node?.video_url;
-                    } else if (type === "photo") {
-                        url = e.node?.display_url;
-                    }
+                    const videoURL = typeof e.node?.video_url === "string"
+                        ? e.node.video_url
+                        : undefined;
+                    const type = e.node?.is_video && videoURL ? "video" : "photo";
+                    const url = type === "video"
+                        ? videoURL
+                        : e.node?.display_url;
+                    const thumbURL = e.node?.display_url;
+                    if (!url || !thumbURL) return;
 
                     let itemExt = type === "video" ? "mp4" : "jpg";
 
@@ -332,13 +406,15 @@ export default function instagram(obj) {
                         thumb: createStream({
                             service: "instagram",
                             type: "proxy",
-                            url: e.node?.display_url,
+                            url: thumbURL,
                             filename: `instagram_${id}_${i + 1}.jpg`
                         })
                     }
-                });
+                })
+                .filter(Boolean);
 
-            if (picker.length) return { picker }
+            if (picker.length === sidecar.edges.length && picker.length) return { picker }
+            return;
         }
 
         if (shortcodeMedia?.video_url) {
@@ -360,17 +436,19 @@ export default function instagram(obj) {
 
     function extractNewPost(data, id, alwaysProxy) {
         const carousel = data.carousel_media;
-        if (carousel) {
-            const picker = carousel.filter(e => e?.image_versions2)
+        if (Array.isArray(carousel)) {
+            const picker = carousel
                 .map((e, i) => {
-                    const type = e.video_versions ? "video" : "photo";
-                    const imageUrl = e.image_versions2.candidates[0].url;
+                    const video = largestVideo(e?.video_versions);
+                    if (e?.video_versions && !video) return;
+                    const type = video ? "video" : "photo";
+                    const imageUrl = firstImageURL(e);
+                    if (!imageUrl) return;
 
                     let url = imageUrl;
                     let itemExt = type === "video" ? "mp4" : "jpg";
 
                     if (type === "video") {
-                        const video = e.video_versions.reduce((a, b) => a.width * a.height < b.width * b.height ? b : a);
                         url = video.url;
                     }
 
@@ -394,19 +472,21 @@ export default function instagram(obj) {
                             filename: `instagram_${id}_${i + 1}.jpg`
                         })
                     }
-                });
+                })
+                .filter(Boolean);
 
-            if (picker.length) return { picker }
+            if (picker.length === carousel.length && picker.length) return { picker }
         } else if (data.video_versions) {
-            const video = data.video_versions.reduce((a, b) => a.width * a.height < b.width * b.height ? b : a)
+            const video = largestVideo(data.video_versions);
+            if (!video) return;
             return {
                 urls: video.url,
                 filename: `instagram_${id}.mp4`,
                 audioFilename: `instagram_${id}_audio`
             }
-        } else if (data.image_versions2?.candidates) {
+        } else if (firstImageURL(data)) {
             return {
-                urls: data.image_versions2.candidates[0].url,
+                urls: firstImageURL(data),
                 isPhoto: true,
                 filename: `instagram_${id}.jpg`,
             }
@@ -414,9 +494,6 @@ export default function instagram(obj) {
     }
 
     async function getPost(id, alwaysProxy) {
-        const hasData = (data) => data
-                                    && data.gql_data !== null
-                                    && data?.gql_data?.xdt_shortcode_media !== null;
         let data, result;
         try {
             const cookie = getCookie('instagram');
@@ -495,11 +572,13 @@ export default function instagram(obj) {
             media = data?.data?.xdt_api__v1__feed__reels_media?.reels_media?.find(m => m.id === userId);
         } catch {}
 
-        const item = media.items.find(m => m.pk === id);
+        const item = Array.isArray(media?.items)
+            ? media.items.find(m => m.pk === id)
+            : undefined;
         if (!item) return { error: "fetch.empty" };
 
-        if (item.video_versions) {
-            const video = item.video_versions.reduce((a, b) => a.width * a.height < b.width * b.height ? b : a)
+        const video = largestVideo(item.video_versions);
+        if (video) {
             return {
                 urls: video.url,
                 filename: `instagram_${id}.mp4`,
@@ -507,9 +586,10 @@ export default function instagram(obj) {
             }
         }
 
-        if (item.image_versions2?.candidates) {
+        const imageURL = firstImageURL(item);
+        if (imageURL) {
             return {
-                urls: item.image_versions2.candidates[0].url,
+                urls: imageURL,
                 isPhoto: true,
                 filename: `instagram_${id}.jpg`,
             }

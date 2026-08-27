@@ -12,6 +12,7 @@
         "start": "node src/cobalt",
         "test": "node src/util/test",
         "test:contract": "node --test test/service-contract.test.js",
+        "test:instagram:contract": "node --test test/instagram-contract.test.js",
         "token:jwt": "node src/util/generate-jwt-secret"
     },
     "repository": {
